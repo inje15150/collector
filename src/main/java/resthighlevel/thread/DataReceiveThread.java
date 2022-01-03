@@ -2,38 +2,61 @@ package resthighlevel.thread;
 
 import com.google.gson.Gson;
 import entity.AgentInfoEntity;
+import entity.AgentInfoKeyMapping;
 import entity.JavaInfoEntity;
 import insert.ElasticsearchInsert;
+import insert.ElasticsearchSearch;
+import mariadb.DataBaseCon;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.client.RestHighLevelClient;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.PrintWriter;
 import java.net.Socket;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
+import java.util.*;
 
 public class DataReceiveThread extends Thread {
 
-    static Logger log = LogManager.getLogger(DataReceiveThread.class);
+    private final Logger log = LogManager.getLogger(DataReceiveThread.class);
     private Socket socket;
     private String key;
     private final static String keyRule = "%%#!";
-    private final static String RESPONSE_OK = "ok";
+    public final static String RESPONSE_OK = "ok";
     private boolean stop;
-    private Map<String, Socket> socketList = new ConcurrentHashMap<>();
     private Gson gson = new Gson();
+    private final static int CPU_TYPE = 1;
+    private final static int MEM_TYPE = 2;
+    private final DataBaseCon dataBaseCon;
+    private final SendQueue sendQueue = new SendQueue();
+    private RestHighLevelClient client;
 
-    public DataReceiveThread(Socket socket) {
+
+    public DataReceiveThread(DataBaseCon dataBaseCon) {
+        this.dataBaseCon = dataBaseCon;
+    }
+
+    public DataReceiveThread(Socket socket, DataBaseCon dataBaseCon, RestHighLevelClient client) {
         this.socket = socket;
         this.stop = false;
+        this.dataBaseCon = dataBaseCon;
+        this.client = client;
     }
+
+    public String getKey() {
+        return key;
+    }
+
     @Override
     public void run() {
         BufferedReader reader = null;
         PrintWriter writer = null;
+        // _cat/nodes api 사용하여 ip 별 노드네임 정보 얻어오기
+        ElasticsearchSearch search = new ElasticsearchSearch();
+        Map<String, String> nodeName = search.search();
 
         while (!stop) {
             try {
@@ -50,9 +73,9 @@ public class DataReceiveThread extends Thread {
                         writer.close();
                         break;
                     }
+                    log.info("[{}] key authentication success !", RESPONSE_OK);
                 }
                 if (isEqualKey(data)) {
-                    log.info("[{}] key authentication success !", RESPONSE_OK);
                     response_OK(writer); // ok 전송
 
                     String agentInfo = reader.readLine(); // 데이터 수신 대기
@@ -67,7 +90,18 @@ public class DataReceiveThread extends Thread {
 
                     response_OK(writer); // ok 전송
 
-                    elasticSearchInsert(agentInfoEntityToJson, javaInfoEntityToJson); // agentInfo, javaInfo insert
+                    // DB 키 값들 select 후 list 담기
+                    if (!dataBaseCon.select().contains(key)) { // 현재 key 값이 포함되어 있지 않으면 insert
+                        dataBaseCon.insert(agentInfoEntity.getIp(), getKey(), agentInfoEntity.getMac_address(), agentInfoEntity.getGateway(), agentInfoEntity.getOsInfo(), nodeName.get(agentInfoEntity.getIp()));
+                    } else {
+                        dataBaseCon.update(agentInfoEntity.getIp(), getKey(), agentInfoEntity.getMac_address(), agentInfoEntity.getGateway(), agentInfoEntity.getOsInfo(), nodeName.get(agentInfoEntity.getIp()));
+                    }
+
+                    // elasticSearch insert
+                   elasticSearchInsert(agentInfoEntityToJson, javaInfoEntityToJson);// agentInfo, javaInfo insert
+
+                    // queue 에 담기
+                    sendQueue.queueAdd(new AgentInfoKeyMapping(key, agentInfoEntity));
 
                 } else {
                     log.error("Incorrect key between server and client.");
@@ -82,12 +116,16 @@ public class DataReceiveThread extends Thread {
             } catch (IOException e) {
                 log.error(e.getMessage()); // 쓰레드 종료
                 stop = true;
-                try {
-                    reader.close();
-                } catch (IOException ex) {
-                    ex.printStackTrace();
+                if (reader != null) {
+                    try {
+                        reader.close();
+                    } catch (IOException ex) {
+                        log.error(ex.getMessage());
+                    }
                 }
-                writer.close();
+                if (writer != null) {
+                    writer.close();
+                }
                 break;
             }
         }
@@ -118,6 +156,7 @@ public class DataReceiveThread extends Thread {
             return true;
         }
     }
+
     // 서버 측에 키 값이 존재
     public <T> T dataReceive(String entity, Class<T> clazz) {
 
@@ -133,7 +172,7 @@ public class DataReceiveThread extends Thread {
     }
 
     public void elasticSearchInsert(String agentInfo, String javaInfo) {
-        ElasticsearchInsert insert = new ElasticsearchInsert(agentInfo, javaInfo);
+        ElasticsearchInsert insert = new ElasticsearchInsert(client, agentInfo, javaInfo);
         insert.insert();
     }
 }

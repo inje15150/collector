@@ -32,4 +32,53 @@ public class AgentInfoEntity {
         this.event_time = event_time;
         this.processes = processes;
     }
+
+    public String getEvent_time() {
+        return event_time;
+    }
+
+    public String getOsInfo() {
+        return osInfo;
+    }
+
+    public String getIp() {
+        return ip;
+    }
+
+    public String getGateway() {
+        return gateway;
+    }
+
+    public String getMac_address() {
+        return mac_address;
+    }
+
+    public float getCpu() {
+        return cpu;
+    }
+
+    public float getMemory() {
+        return memory;
+    }
+
+    public List<ProcessInfo> getProcesses() {
+        return processes;
+    }
+
+
+    @Override
+    public String toString() {
+        return "AgentInfoEntity{" +
+                "hostname='" + hostname + '\'' +
+                ", osInfo='" + osInfo + '\'' +
+                ", interface_name='" + interface_name + '\'' +
+                ", ip='" + ip + '\'' +
+                ", gateway='" + gateway + '\'' +
+                ", mac_address='" + mac_address + '\'' +
+                ", cpu=" + cpu +
+                ", memory=" + memory +
+                ", disk=" + disk +
+                ", event_time='" + event_time + '\'' +
+                '}';
+    }
 }
